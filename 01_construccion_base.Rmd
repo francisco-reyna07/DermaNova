@@ -1,0 +1,303 @@
+---
+title: "RETO_FINAL"
+output: html_document
+date: "2026-08-31"
+---
+
+# Librerías
+
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(ggrepel)
+library(writexl)
+```
+
+# Leer Bases de Datos
+
+```{r}
+Brand_shares <- read_excel("C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/Brand shares.xls")
+
+Company_shares <- read_excel("C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/Company shares.xls")
+
+Market_sizes <- read_excel("C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/Market sizes.xls")
+
+Premium_vs_Mass <- read_excel("C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/Premium vs Mass.xls")
+
+Products_by_Ingredient <- read_excel("C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/Products by Ingredient.xls")
+
+Retain_Channels<- read_excel("C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/Retain Channels.xls")
+```
+
+# Creación de base de datos
+
+```{r}
+# Brand Shares en formato largo
+
+Brand_shares_long <- Brand_shares %>%
+  mutate(
+    across(`2016`:`2025`, ~ na_if(as.character(.), "-"))
+  ) %>%
+  pivot_longer(
+    cols = `2016`:`2025`,
+    names_to = "Year",
+    values_to = "Brand_Share"
+  ) %>%
+  mutate(
+    Year = as.numeric(Year),
+    Brand_Share = readr::parse_number(
+      Brand_Share,
+      locale = locale(grouping_mark = ",")
+    ),
+    Brand_Present = if_else(
+      !is.na(Brand_Share) & Brand_Share > 0,
+      1L,
+      0L
+    )
+  )
+
+# Identificar lanzamiento de una nueva marca
+
+Brand_shares_long <- Brand_shares_long %>%
+  group_by(
+    Geography,
+    Category,
+    `Brand Name`,
+    `Company Name (GBO)`,
+    `Data Type`
+  ) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(
+    New_Brand = if_else(
+      Brand_Present == 1 &
+        lag(Brand_Present, default = 1) == 0,
+      1L,
+      0L
+    )
+  ) %>%
+  ungroup()
+```
+
+```{r}
+# Revisar lanzamientos identificados
+
+Brand_shares_long %>%
+  filter(New_Brand == 1) %>%
+  select(
+    Geography,
+    Category,
+    `Brand Name`,
+    `Company Name (GBO)`,
+    Year,
+    Brand_Share
+  ) %>%
+  arrange(Year, Category)
+
+# Número de lanzamientos por año
+
+Brand_shares_long %>%
+  filter(New_Brand == 1) %>%
+  count(Year, name = "Num_Launches")
+```
+
+## Colapsar Brand Shares
+
+```{r}
+# Brand Shares a nivel empresa-categoría-año
+
+brand_company_year <- Brand_shares_long %>%
+  group_by(
+    Geography,
+    Category,
+    `Company Name (GBO)`,
+    Year
+  ) %>%
+  summarise(
+    Num_Brands = sum(Brand_Present, na.rm = TRUE),
+    Num_New_Brands = sum(New_Brand, na.rm = TRUE),
+    New_Brand = as.integer(Num_New_Brands > 0),
+    .groups = "drop"
+  )
+```
+
+## Company_shares
+
+```{r}
+# Company Shares en formato largo
+
+Company_shares_long <- Company_shares %>%
+  mutate(
+    across(`2016`:`2025`, ~ na_if(as.character(.), "-"))
+  ) %>%
+  pivot_longer(
+    cols = `2016`:`2025`,
+    names_to = "Year",
+    values_to = "Company_Share"
+  ) %>%
+  mutate(
+    Year = as.numeric(Year),
+    Company_Share = readr::parse_number(
+      Company_Share,
+      locale = locale(grouping_mark = ",")
+    )
+  )
+```
+
+```{r}
+revision_merge <- full_join(
+  Company_shares_long %>%
+    mutate(master = 1),
+  
+  brand_company_year %>%
+    rename(`Company Name` = `Company Name (GBO)`) %>%
+    mutate(using = 1),
+  
+  by = c(
+    "Geography",
+    "Category",
+    "Company Name",
+    "Year"
+  )
+) %>%
+  mutate(
+    merge = case_when(
+      !is.na(master) & is.na(using) ~ 1,
+      is.na(master) & !is.na(using) ~ 2,
+      !is.na(master) & !is.na(using) ~ 3
+    )
+  )
+
+table(revision_merge$merge)
+```
+
+```{r}
+# Creación de base final
+
+base_final <- Company_shares_long %>%
+  left_join(
+    brand_company_year,
+    by = c(
+      "Geography",
+      "Category",
+      "Company Name" = "Company Name (GBO)",
+      "Year"
+    )
+  ) %>%
+  filter(
+    `Company Name` != "Total",
+    Category != "Beauty and Personal Care"
+  )
+
+# Eliminar observaciones sin información de tratamiento
+
+base_final <- base_final %>%
+  filter(!is.na(New_Brand))
+```
+
+## Market Sizes
+
+```{r}
+# Market Sizes en formato largo
+
+Market_sizes_long <- Market_sizes %>%
+  mutate(
+    across(`2016`:`2025`, ~ na_if(as.character(.), "-"))
+  ) %>%
+  pivot_longer(
+    cols = `2016`:`2025`,
+    names_to = "Year",
+    values_to = "Market_Size"
+  ) %>%
+  mutate(
+    Year = as.numeric(Year),
+    Market_Size = readr::parse_number(
+      Market_Size,
+      locale = locale(grouping_mark = ",")
+    )
+  )
+
+# Conservar tamaño de mercado comparable
+
+Market_sizes_analysis <- Market_sizes_long %>%
+  filter(
+    `Data Type` == "Retail Value RSP",
+    Unit == "MXN million",
+    `Current Constant` == "Current Prices",
+    Category %in% unique(base_final$Category)
+  )
+```
+
+```{r}
+# Agregar Market Size a la base final
+
+base_final <- base_final %>%
+  left_join(
+    Market_sizes_analysis %>%
+      select(
+        Geography,
+        Category,
+        Year,
+        Market_Size
+      ),
+    by = c(
+      "Geography",
+      "Category",
+      "Year"
+    )
+  )
+```
+
+```{r}
+# Ventas estimadas de cada empresa
+
+base_final <- base_final %>%
+  mutate(
+    Estimated_Sales = (Company_Share / 100) * Market_Size
+  )
+
+# Cambio porcentual anual en ventas
+
+base_final <- base_final %>%
+  group_by(
+    Geography,
+    Category,
+    `Company Name`
+  ) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(
+    Sales_Change = if_else(
+      lag(Estimated_Sales) == 0,
+      NA_real_,
+      ((Estimated_Sales - lag(Estimated_Sales)) /
+         lag(Estimated_Sales)) * 100
+    )
+  ) %>%
+  ungroup()
+
+# Crecimiento porcentual anual del mercado
+
+base_final <- base_final %>%
+  group_by(
+    Geography,
+    Category
+  ) %>%
+  mutate(
+    Market_Growth = (
+      (Market_Size - Market_Size[match(Year - 1, Year)]) /
+      Market_Size[match(Year - 1, Year)]
+    ) * 100
+  ) %>%
+  ungroup()
+```
+
+```{r}
+# Guardar base final
+
+writexl::write_xlsx(
+  base_final,
+  "C:/Users/reyna/OneDrive/Escritorio/TRABAJOS PARA EL TEC 9NO/INVESTIGACIÓN Y CONSULTORÍA ECONÓMICA/bases_reto/base_final.xlsx"
+)
+```

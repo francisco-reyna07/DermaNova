@@ -1,6 +1,6 @@
 # Datos
 
-Los datos utilizados en este proyecto provienen de Euromonitor.
+Los datos utilizados para 01_construccion_base en este proyecto provienen de Euromonitor.
 
 No se incluyen en este repositorio debido a restricciones de licencia y derechos de uso asociados a la fuente original.
 
